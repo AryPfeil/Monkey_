@@ -1,11 +1,13 @@
 import sqlite3
 import tkinter as tk
 from tkinter import messagebox, ttk
+import matplotlib.pyplot as plt
 
 # Connexion à la base
 conn = sqlite3.connect("depenses.db")
 cursor = conn.cursor()
 
+# Table dépenses
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS depenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14,15 +16,58 @@ CREATE TABLE IF NOT EXISTS depenses (
     date TEXT
 )
 """)
+
+# Table catégories
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT UNIQUE
+)
+""")
 conn.commit()
+
+# Catégories par défaut
+categories_defaut = ["Nourriture", "Logement", "Transport", "Loisirs", "Autre"]
+for cat in categories_defaut:
+    cursor.execute("INSERT OR IGNORE INTO categories (nom) VALUES (?)", (cat,))
+conn.commit()
+
+def get_categories():
+    cursor.execute("SELECT nom FROM categories")
+    return [row[0] for row in cursor.fetchall()]
+
+def ajouter_categorie():
+    fenetre = tk.Toplevel(root)
+    fenetre.title("Ajouter une catégorie")
+
+    tk.Label(fenetre, text="Nom de la catégorie :").grid(row=0, column=0, padx=5, pady=5)
+    entree_nom = tk.Entry(fenetre)
+    entree_nom.grid(row=0, column=1, padx=5, pady=5)
+
+    def sauvegarder_cat():
+        nom = entree_nom.get().strip()
+        if nom:
+            try:
+                cursor.execute("INSERT INTO categories (nom) VALUES (?)", (nom,))
+                conn.commit()
+                messagebox.showinfo("Succès", f"✅ Catégorie '{nom}' ajoutée")
+                fenetre.destroy()
+            except sqlite3.IntegrityError:
+                messagebox.showerror("Erreur", "⚠️ Cette catégorie existe déjà")
+        else:
+            messagebox.showerror("Erreur", "⚠️ Le nom ne peut pas être vide")
+
+    tk.Button(fenetre, text="Ajouter", command=sauvegarder_cat).grid(row=1, column=0, columnspan=2, pady=10)
 
 def ajouter_depense():
     fenetre = tk.Toplevel(root)
     fenetre.title("Ajouter une dépense")
 
     tk.Label(fenetre, text="Catégorie :").grid(row=0, column=0, padx=5, pady=5)
-    entree_categorie = tk.Entry(fenetre)
-    entree_categorie.grid(row=0, column=1, padx=5, pady=5)
+    categories = get_categories()
+    categorie_var = tk.StringVar(value=categories[0])
+    menu_categorie = ttk.Combobox(fenetre, textvariable=categorie_var, values=categories, state="readonly")
+    menu_categorie.grid(row=0, column=1, padx=5, pady=5)
 
     tk.Label(fenetre, text="Montant :").grid(row=1, column=0, padx=5, pady=5)
     entree_montant = tk.Entry(fenetre)
@@ -34,7 +79,7 @@ def ajouter_depense():
 
     def sauvegarder():
         try:
-            categorie = entree_categorie.get()
+            categorie = categorie_var.get()
             montant = float(entree_montant.get())
             date = entree_date.get()
 
@@ -68,84 +113,29 @@ def voir_depenses():
 
     table.pack(fill="both", expand=True)
 
-    def supprimer_depense():
-        selection = table.selection()
-        if not selection:
-            messagebox.showwarning("Attention", "⚠️ Sélectionne une dépense à supprimer")
-            return
+def afficher_statistiques():
+    cursor.execute("SELECT categorie, SUM(montant) FROM depenses GROUP BY categorie")
+    data = cursor.fetchall()
 
-        item = table.item(selection[0])
-        depense_id = item["values"][0]  # ID en première colonne
+    if not data:
+        messagebox.showinfo("Statistiques", "⚠️ Aucune dépense enregistrée")
+        return
 
-        cursor.execute("DELETE FROM depenses WHERE id = ?", (depense_id,))
-        conn.commit()
+    categories = [row[0] for row in data]
+    montants = [row[1] for row in data]
 
-        table.delete(selection[0])
-        messagebox.showinfo("Succès", f"✅ Dépense {depense_id} supprimée")
-
-    def modifier_depense():
-        selection = table.selection()
-        if not selection:
-            messagebox.showwarning("Attention", "⚠️ Sélectionne une dépense à modifier")
-            return
-
-        item = table.item(selection[0])
-        depense_id, categorie, montant, date = item["values"]
-
-        fenetre_modif = tk.Toplevel(fenetre)
-        fenetre_modif.title("Modifier une dépense")
-
-        tk.Label(fenetre_modif, text="Catégorie :").grid(row=0, column=0, padx=5, pady=5)
-        entree_categorie = tk.Entry(fenetre_modif)
-        entree_categorie.insert(0, categorie)
-        entree_categorie.grid(row=0, column=1, padx=5, pady=5)
-
-        tk.Label(fenetre_modif, text="Montant :").grid(row=1, column=0, padx=5, pady=5)
-        entree_montant = tk.Entry(fenetre_modif)
-        entree_montant.insert(0, montant)
-        entree_montant.grid(row=1, column=1, padx=5, pady=5)
-
-        tk.Label(fenetre_modif, text="Date (AAAA-MM-JJ) :").grid(row=2, column=0, padx=5, pady=5)
-        entree_date = tk.Entry(fenetre_modif)
-        entree_date.insert(0, date)
-        entree_date.grid(row=2, column=1, padx=5, pady=5)
-
-        def sauvegarder_modif():
-            try:
-                nouvelle_categorie = entree_categorie.get()
-                nouveau_montant = float(entree_montant.get())
-                nouvelle_date = entree_date.get()
-
-                cursor.execute("""
-                UPDATE depenses
-                SET categorie = ?, montant = ?, date = ?
-                WHERE id = ?
-                """, (nouvelle_categorie, nouveau_montant, nouvelle_date, depense_id))
-                conn.commit()
-
-                # Mettre à jour la ligne dans le tableau
-                table.item(selection[0], values=(depense_id, nouvelle_categorie, nouveau_montant, nouvelle_date))
-
-                messagebox.showinfo("Succès", "✅ Dépense modifiée avec succès !")
-                fenetre_modif.destroy()
-            except ValueError:
-                messagebox.showerror("Erreur", "⚠️ Le montant doit être un nombre valide")
-
-        tk.Button(fenetre_modif, text="Sauvegarder", command=sauvegarder_modif).grid(row=3, column=0, columnspan=2, pady=10)
-
-    btn_frame = tk.Frame(fenetre)
-    btn_frame.pack(pady=10)
-
-    tk.Button(btn_frame, text="🗑️ Supprimer", command=supprimer_depense, width=20).grid(row=0, column=0, padx=5)
-    tk.Button(btn_frame, text="✏️ Modifier", command=modifier_depense, width=20).grid(row=0, column=1, padx=5)
+    plt.pie(montants, labels=categories, autopct="%1.1f%%", startangle=90)
+    plt.title("Répartition des dépenses par catégorie")
+    plt.show()
 
 # Fenêtre principale
 root = tk.Tk()
 root.title("Suivi des dépenses")
 
-tk.Button(root, text="➕ Ajouter une dépense", command=ajouter_depense, width=30).pack(pady=10)
-tk.Button(root, text="📊 Voir les dépenses", command=voir_depenses, width=30).pack(pady=10)
+tk.Button(root, text="➕ Ajouter une dépense", command=ajouter_depense, width=30).pack(pady=5)
+tk.Button(root, text="📊 Voir les dépenses", command=voir_depenses, width=30).pack(pady=5)
+tk.Button(root, text="➕ Ajouter une catégorie", command=ajouter_categorie, width=30).pack(pady=5)
+tk.Button(root, text="📈 Statistiques", command=afficher_statistiques, width=30).pack(pady=5)
 
 root.mainloop()
-
 conn.close()
